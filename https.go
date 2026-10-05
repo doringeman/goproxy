@@ -25,6 +25,22 @@ import (
 
 var responseHeadTerminator = []byte("\r\n\r\n")
 
+type continueOnRead struct {
+	io.ReadCloser
+	client io.Writer
+	sent   bool
+}
+
+func (r *continueOnRead) Read(p []byte) (int, error) {
+	if !r.sent {
+		r.sent = true
+		if _, err := io.WriteString(r.client, "HTTP/1.1 100 Continue\r\n\r\n"); err != nil {
+			return 0, err
+		}
+	}
+	return r.ReadCloser.Read(p)
+}
+
 type responseHeadWriter struct {
 	writer    io.Writer
 	head      bytes.Buffer
@@ -478,6 +494,13 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 				}
 				if err != nil {
 					return
+				}
+				// The hijacked MITM connection has no net/http server to send
+				// 100 Continue when a handler reads the request body.
+				hasBody := req.Body != nil && req.Body != http.NoBody
+				expectsContinue := strings.EqualFold(strings.TrimSpace(req.Header.Get("Expect")), "100-continue")
+				if req.ProtoAtLeast(1, 1) && hasBody && expectsContinue {
+					req.Body = &continueOnRead{ReadCloser: req.Body, client: client}
 				}
 
 				// since we're converting the request, need to carry over the
