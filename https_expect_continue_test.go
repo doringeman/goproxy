@@ -19,16 +19,19 @@ import (
 
 func TestMitmSendsContinueBeforeReadingBody(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		useTLS bool
-		expect string
+		name                    string
+		useTLS                  bool
+		expect                  string
+		preventCanonicalization bool
 	}{
-		{"cleartext/single", false, "Expect: 100-continue\r\n"},
-		{"TLS/single", true, "Expect: 100-continue\r\n"},
-		{"cleartext/combined", false, "Expect: 100-continue, 100-CONTINUE\r\n"},
-		{"TLS/combined", true, "Expect: 100-continue, 100-CONTINUE\r\n"},
-		{"cleartext/repeated", false, "Expect: 100-continue\r\nExpect: 100-continue\r\n"},
-		{"TLS/repeated", true, "Expect: 100-continue\r\nExpect: 100-continue\r\n"},
+		{"cleartext/single", false, "Expect: 100-continue\r\n", false},
+		{"TLS/single", true, "Expect: 100-continue\r\n", false},
+		{"cleartext/combined", false, "Expect: 100-continue, 100-CONTINUE\r\n", false},
+		{"TLS/combined", true, "Expect: 100-continue, 100-CONTINUE\r\n", false},
+		{"cleartext/repeated", false, "Expect: 100-continue\r\nExpect: 100-continue\r\n", false},
+		{"TLS/repeated", true, "Expect: 100-continue\r\nExpect: 100-continue\r\n", false},
+		{"cleartext/noncanonical", false, "expect: 100-continue, 100-CONTINUE\r\n", true},
+		{"TLS/noncanonical", true, "eXpEcT: 100-continue\r\n", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			body := strings.Repeat("x", 80_000)
@@ -54,6 +57,7 @@ func TestMitmSendsContinueBeforeReadingBody(t *testing.T) {
 			require.NoError(t, err)
 
 			proxy := goproxy.NewProxyHttpServer()
+			proxy.PreventCanonicalization = tc.preventCanonicalization
 			proxy.Tr.TLSClientConfig = &tls.Config{
 				InsecureSkipVerify: true,
 			}
