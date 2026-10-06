@@ -509,7 +509,7 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 				// The hijacked MITM connection has no net/http server to send
 				// 100 Continue when a handler reads the request body.
 				hasBody := req.Body != nil && req.Body != http.NoBody
-				expectsContinue := strings.EqualFold(strings.TrimSpace(req.Header.Get("Expect")), "100-continue")
+				expectsContinue := headerContains(req.Header, "Expect", "100-continue")
 				var continueBody *continueOnRead
 				if req.ProtoAtLeast(1, 1) && hasBody && expectsContinue {
 					continueBody = &continueOnRead{ReadCloser: req.Body, client: client, canWrite: true}

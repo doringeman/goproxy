@@ -18,12 +18,19 @@ import (
 )
 
 func TestMitmSendsContinueBeforeReadingBody(t *testing.T) {
-	for _, useTLS := range []bool{false, true} {
-		name := "cleartext"
-		if useTLS {
-			name = "TLS"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		useTLS bool
+		expect string
+	}{
+		{"cleartext/single", false, "Expect: 100-continue\r\n"},
+		{"TLS/single", true, "Expect: 100-continue\r\n"},
+		{"cleartext/combined", false, "Expect: 100-continue, 100-CONTINUE\r\n"},
+		{"TLS/combined", true, "Expect: 100-continue, 100-CONTINUE\r\n"},
+		{"cleartext/repeated", false, "Expect: 100-continue\r\nExpect: 100-continue\r\n"},
+		{"TLS/repeated", true, "Expect: 100-continue\r\nExpect: 100-continue\r\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			body := strings.Repeat("x", 80_000)
 			received := make(chan string, 1)
 			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -37,7 +44,7 @@ func TestMitmSendsContinueBeforeReadingBody(t *testing.T) {
 			})
 
 			upstream := httptest.NewUnstartedServer(handler)
-			if useTLS {
+			if tc.useTLS {
 				upstream.StartTLS()
 			} else {
 				upstream.Start()
@@ -72,7 +79,7 @@ func TestMitmSendsContinueBeforeReadingBody(t *testing.T) {
 			require.NoError(t, connectResponse.Body.Close())
 
 			var conn net.Conn
-			if useTLS {
+			if tc.useTLS {
 				tlsConn := tls.Client(raw, &tls.Config{
 					InsecureSkipVerify: true,
 				})
@@ -82,8 +89,8 @@ func TestMitmSendsContinueBeforeReadingBody(t *testing.T) {
 				conn = raw
 			}
 			_, err = fmt.Fprintf(conn,
-				"PUT /upload HTTP/1.1\r\nHost: %s\r\nContent-Length: %d\r\nExpect: 100-continue\r\n\r\n",
-				upstreamURL.Host, len(body))
+				"PUT /upload HTTP/1.1\r\nHost: %s\r\nContent-Length: %d\r\n%s\r\n",
+				upstreamURL.Host, len(body), tc.expect)
 			require.NoError(t, err)
 			reader := bufio.NewReader(conn)
 			interim, err := http.ReadResponse(reader, nil)
