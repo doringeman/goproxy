@@ -27,18 +27,29 @@ var responseHeadTerminator = []byte("\r\n\r\n")
 
 type continueOnRead struct {
 	io.ReadCloser
-	client io.Writer
-	sent   bool
+	client   io.Writer
+	mu       sync.Mutex
+	canWrite bool
+	sent     bool
 }
 
 func (r *continueOnRead) Read(p []byte) (int, error) {
-	if !r.sent {
+	r.mu.Lock()
+	if r.canWrite && !r.sent {
 		r.sent = true
 		if _, err := io.WriteString(r.client, "HTTP/1.1 100 Continue\r\n\r\n"); err != nil {
+			r.mu.Unlock()
 			return 0, err
 		}
 	}
+	r.mu.Unlock()
 	return r.ReadCloser.Read(p)
+}
+
+func (r *continueOnRead) stop() {
+	r.mu.Lock()
+	r.canWrite = false
+	r.mu.Unlock()
 }
 
 type responseHeadWriter struct {
@@ -499,8 +510,10 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 				// 100 Continue when a handler reads the request body.
 				hasBody := req.Body != nil && req.Body != http.NoBody
 				expectsContinue := strings.EqualFold(strings.TrimSpace(req.Header.Get("Expect")), "100-continue")
+				var continueBody *continueOnRead
 				if req.ProtoAtLeast(1, 1) && hasBody && expectsContinue {
-					req.Body = &continueOnRead{ReadCloser: req.Body, client: client}
+					continueBody = &continueOnRead{ReadCloser: req.Body, client: client, canWrite: true}
+					req.Body = continueBody
 				}
 
 				// since we're converting the request, need to carry over the
@@ -587,6 +600,9 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 					resp.Proto = "HTTP/1.1"
 					resp.ProtoMajor = 1
 					resp.ProtoMinor = 1
+					if continueBody != nil {
+						continueBody.stop()
+					}
 
 					if isWebSocketHandshake(resp.Header) {
 						ctx.Logf("Response looks like websocket upgrade.")
